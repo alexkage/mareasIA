@@ -368,66 +368,123 @@ enum TideService {
     }
 
     static func fetchTodayTides(latitude: Double, longitude: Double) async throws -> DailyTideData {
-        var components = URLComponents(string: "https://marine-api.open-meteo.com/v1/marine")!
-        components.queryItems = [
-            .init(name: "latitude", value: String(latitude)),
-            .init(name: "longitude", value: String(longitude)),
-            .init(name: "hourly", value: "tide_height"),
-            .init(name: "forecast_days", value: "1"),
-            .init(name: "timezone", value: "auto")
-        ]
+        let (start, end) = todayDateRange()
+        let lat = String(latitude)
+        let lng = String(longitude)
 
-        let (data, response) = try await URLSession.shared.data(from: components.url!)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else {
+        async let seaLevelData = stormglassRequest(
+            path: "/v2/tide/sea-level/point",
+            queryItems: [
+                .init(name: "lat", value: lat),
+                .init(name: "lng", value: lng),
+                .init(name: "start", value: start),
+                .init(name: "end", value: end)
+            ]
+        )
+        async let extremesData = stormglassRequest(
+            path: "/v2/tide/extremes/point",
+            queryItems: [
+                .init(name: "lat", value: lat),
+                .init(name: "lng", value: lng),
+                .init(name: "start", value: start),
+                .init(name: "end", value: end)
+            ]
+        )
+
+        let seaLevel = try JSONDecoder().decode(StormglassSeaLevelResponse.self, from: try await seaLevelData)
+        let extremes = try JSONDecoder().decode(StormglassExtremesResponse.self, from: try await extremesData)
+
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+
+        let fallbackParser = ISO8601DateFormatter()
+        fallbackParser.formatOptions = [.withInternetDateTime]
+
+        func parseDate(_ value: String) -> Date? {
+            parser.date(from: value) ?? fallbackParser.date(from: value)
+        }
+
+        let points = seaLevel.data.compactMap { item -> TidePoint? in
+            guard let date = parseDate(item.time) else { return nil }
+            return TidePoint(time: date, height: item.sg)
+        }.sorted(by: { $0.time < $1.time })
+
+        let events = extremes.data.compactMap { item -> TideEvent? in
+            guard let date = parseDate(item.time) else { return nil }
+            let kind: TideEvent.Kind = item.type == "high" ? .high : .low
+            return TideEvent(time: date, height: item.height, kind: kind)
+        }.sorted(by: { $0.time < $1.time })
+
+        guard !points.isEmpty else { throw TideServiceError.invalidData }
+
+        return DailyTideData(points: points, events: events)
+    }
+
+    #if DEBUG
+    static var testAPIKeyOverride: String?
+    #endif
+
+    private static var stormglassAPIKey: String {
+        #if DEBUG
+        if let testAPIKeyOverride { return testAPIKeyOverride }
+        #endif
+
+        guard
+            let url = Bundle.main.url(forResource: "Secrets", withExtension: "plist"),
+            let data = try? Data(contentsOf: url),
+            let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+            let key = plist["STORMGLASS_API_KEY"] as? String,
+            !key.isEmpty,
+            key != "YOUR_STORMGLASS_API_KEY"
+        else {
+            return ""
+        }
+        return key
+    }
+
+    private static func todayDateRange() -> (start: String, end: String) {
+        let calendar = Calendar.current
+        let startDate = calendar.startOfDay(for: Date())
+        let endDate = calendar.date(byAdding: .day, value: 1, to: startDate)!.addingTimeInterval(-1)
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = .current
+        formatter.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
+
+        return (formatter.string(from: startDate), formatter.string(from: endDate))
+    }
+
+    private static func stormglassRequest(path: String, queryItems: [URLQueryItem]) async throws -> Data {
+        guard !stormglassAPIKey.isEmpty else { throw TideServiceError.missingAPIKey }
+
+        var components = URLComponents(string: "https://api.stormglass.io\(path)")!
+        components.queryItems = queryItems
+
+        guard let url = components.url else { throw TideServiceError.invalidData }
+
+        var request = URLRequest(url: url)
+        request.setValue(stormglassAPIKey, forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw TideServiceError.networkError }
+
+        switch http.statusCode {
+        case 200:
+            return data
+        case 401, 403:
+            throw TideServiceError.unauthorized
+        default:
             throw TideServiceError.networkError
         }
-
-        let decoded = try JSONDecoder().decode(MarineResponse.self, from: data)
-        guard let hourly = decoded.hourly else { throw TideServiceError.invalidData }
-        guard hourly.time.count == hourly.tideHeight.count else { throw TideServiceError.invalidData }
-
-        let parser = DateFormatter()
-        parser.dateFormat = "yyyy-MM-dd'T'HH:mm"
-        parser.locale = Locale(identifier: "en_US_POSIX")
-        parser.timeZone = TimeZone(identifier: decoded.timezone ?? "") ?? .current
-
-        var points: [TidePoint] = []
-        for idx in hourly.time.indices {
-            guard let date = parser.date(from: hourly.time[idx]) else { continue }
-            let height = hourly.tideHeight[idx]
-            points.append(TidePoint(time: date, height: height))
-        }
-
-        return DailyTideData(
-            points: points,
-            events: inferTideEvents(from: points)
-        )
-    }
-    
-
-    private static func inferTideEvents(from points: [TidePoint]) -> [TideEvent] {
-        guard points.count >= 3 else { return [] }
-        var events: [TideEvent] = []
-
-        for idx in 1..<(points.count - 1) {
-            let previous = points[idx - 1].height
-            let current = points[idx].height
-            let next = points[idx + 1].height
-
-            if current > previous && current > next {
-                events.append(TideEvent(time: points[idx].time, height: current, kind: .high))
-            } else if current < previous && current < next {
-                events.append(TideEvent(time: points[idx].time, height: current, kind: .low))
-            }
-        }
-
-        return events.sorted(by: { $0.time < $1.time })
     }
 }
 
-enum TideServiceError: LocalizedError {
+enum TideServiceError: LocalizedError, Equatable {
     case networkError
     case invalidData
+    case unauthorized
+    case missingAPIKey
 
     var errorDescription: String? {
         switch self {
@@ -435,6 +492,10 @@ enum TideServiceError: LocalizedError {
             return "Error de red al consultar la API de mareas."
         case .invalidData:
             return "Los datos recibidos no son validos."
+        case .unauthorized:
+            return "La API key de Stormglass no es valida."
+        case .missingAPIKey:
+            return "Falta la API key. Copia Secrets.example.plist a Secrets.plist e introduce tu clave."
         }
     }
 }
@@ -452,24 +513,23 @@ private struct GeocodingResult: Decodable {
     let longitude: Double
 }
 
-private struct MarineResponse: Decodable {
-    let timezone: String?
-    let hourly: MarineHourly?
-
-    enum CodingKeys: String, CodingKey {
-        case timezone
-        case hourly
-    }
+private struct StormglassSeaLevelResponse: Decodable {
+    let data: [StormglassSeaLevelPoint]
 }
 
-private struct MarineHourly: Decodable {
-    let time: [String]
-    let tideHeight: [Double]
+private struct StormglassSeaLevelPoint: Decodable {
+    let time: String
+    let sg: Double
+}
 
-    enum CodingKeys: String, CodingKey {
-        case time
-        case tideHeight = "tide_height"
-    }
+private struct StormglassExtremesResponse: Decodable {
+    let data: [StormglassExtremePoint]
+}
+
+private struct StormglassExtremePoint: Decodable {
+    let time: String
+    let height: Double
+    let type: String
 }
 
 struct ContentView_Previews: PreviewProvider {

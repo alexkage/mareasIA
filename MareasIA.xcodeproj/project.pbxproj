@@ -14,6 +14,7 @@
 		A514F4802F7C23D0008C2A26 /* MareasIATests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A514F47F2F7C23D0008C2A26 /* MareasIATests.swift */; };
 		A514F48A2F7C23D0008C2A26 /* MareasIAUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A514F4892F7C23D0008C2A26 /* MareasIAUITests.swift */; };
 		A514F48C2F7C23D0008C2A26 /* MareasIAUITestsLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A514F48B2F7C23D0008C2A26 /* MareasIAUITestsLaunchTests.swift */; };
+		A514F4982F7C9999008C2A26 /* Secrets.plist in Resources */ = {isa = PBXBuildFile; fileRef = A514F4972F7C9999008C2A26 /* Secrets.plist */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -44,6 +45,8 @@
 		A514F4852F7C23D0008C2A26 /* MareasIAUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MareasIAUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A514F4892F7C23D0008C2A26 /* MareasIAUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MareasIAUITests.swift; sourceTree = "<group>"; };
 		A514F48B2F7C23D0008C2A26 /* MareasIAUITestsLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MareasIAUITestsLaunchTests.swift; sourceTree = "<group>"; };
+		A514F4972F7C9999008C2A26 /* Secrets.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Secrets.plist; sourceTree = "<group>"; };
+		A514F4992F7C9999008C2A26 /* Secrets.example.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Secrets.example.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -96,6 +99,8 @@
 			children = (
 				A514F46E2F7C23CD008C2A26 /* MareasIAApp.swift */,
 				A514F4702F7C23CD008C2A26 /* ContentView.swift */,
+				A514F4972F7C9999008C2A26 /* Secrets.plist */,
+				A514F4992F7C9999008C2A26 /* Secrets.example.plist */,
 				A514F4722F7C23CF008C2A26 /* Assets.xcassets */,
 				A514F4742F7C23CF008C2A26 /* Preview Content */,
 			);
@@ -232,6 +237,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A514F4762F7C23CF008C2A26 /* Preview Assets.xcassets in Resources */,
+				A514F4982F7C9999008C2A26 /* Secrets.plist in Resources */,
 				A514F4732F7C23CF008C2A26 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

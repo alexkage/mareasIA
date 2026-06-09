@@ -1,0 +1,6 @@
+# API keys (never commit)
+MareasIA/Secrets.plist
+
+# Xcode user data
+xcuserdata/
+*.xcuserstate

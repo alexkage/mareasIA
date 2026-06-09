@@ -12,16 +12,17 @@ final class MareasIATests: XCTestCase {
 
     override func setUpWithError() throws {
         URLProtocol.registerClass(URLProtocolMock.self)
+        TideService.testAPIKeyOverride = "test-api-key"
     }
 
     override func tearDownWithError() throws {
         URLProtocolMock.testResponses = [:]
+        TideService.testAPIKeyOverride = nil
         URLProtocol.unregisterClass(URLProtocolMock.self)
     }
 
     func testExample() async throws {
-        // This is an example of a functional test case.
-        _ = try await fetchTodayTides_parsesJSONAndInfersEvents()
+        _ = try await fetchTodayTides_parsesStormglassResponses()
     }
 
     func testPerformanceExample() throws {
@@ -46,24 +47,28 @@ final class MareasIATests: XCTestCase {
 
     // MARK: - TideService integration (with network stubbing)
 
-    func fetchTodayTides_parsesJSONAndInfersEvents() async throws {
-        // Prepare marine API response with times and tide heights that include highs and lows
-        let json: [String: Any] = [
-            "timezone": "UTC",
-            "hourly": [
-                "time": [
-                    "2026-04-07T00:00",
-                    "2026-04-07T01:00",
-                    "2026-04-07T02:00",
-                    "2026-04-07T03:00",
-                    "2026-04-07T04:00"
-                ],
-                "tide_height": [1.0, 2.5, 1.0, 3.0, 2.0]
+    func fetchTodayTides_parsesStormglassResponses() async throws {
+        let seaLevelJSON: [String: Any] = [
+            "data": [
+                ["time": "2026-04-07T00:00:00+00:00", "sg": 1.0],
+                ["time": "2026-04-07T01:00:00+00:00", "sg": 2.5],
+                ["time": "2026-04-07T02:00:00+00:00", "sg": 1.0],
+                ["time": "2026-04-07T03:00:00+00:00", "sg": 3.0],
+                ["time": "2026-04-07T04:00:00+00:00", "sg": 2.0]
+            ]
+        ]
+        let extremesJSON: [String: Any] = [
+            "data": [
+                ["time": "2026-04-07T01:00:00+00:00", "height": 2.5, "type": "high"],
+                ["time": "2026-04-07T02:00:00+00:00", "height": 1.0, "type": "low"],
+                ["time": "2026-04-07T03:00:00+00:00", "height": 3.0, "type": "high"]
             ]
         ]
 
-        let data = try JSONSerialization.data(withJSONObject: json)
-        URLProtocolMock.testResponses = ["marine-api.open-meteo.com": (200, data)]
+        URLProtocolMock.testResponses = [
+            "api.stormglass.io/v2/tide/sea-level/point": (200, try JSONSerialization.data(withJSONObject: seaLevelJSON)),
+            "api.stormglass.io/v2/tide/extremes/point": (200, try JSONSerialization.data(withJSONObject: extremesJSON))
+        ]
 
         let result = try await TideService.fetchTodayTides(latitude: 42.24, longitude: -8.72)
 
@@ -71,26 +76,28 @@ final class MareasIATests: XCTestCase {
         XCTAssertEqual(result.points[1].height, 2.5, accuracy: 0.0001)
         XCTAssertEqual(result.points[3].height, 3.0, accuracy: 0.0001)
 
-        // Expect two highs (at 01:00 and 03:00) and one low (at 02:00)
         let highs = result.events.filter { $0.kind == .high }
         let lows = result.events.filter { $0.kind == .low }
 
         XCTAssertEqual(highs.count, 2)
         XCTAssertEqual(lows.count, 1)
 
-        // Events should be sorted by time ascending
         let times = result.events.map { $0.time }
-        let sortedTimes = times.sorted()
-        XCTAssertEqual(times, sortedTimes)
+        XCTAssertEqual(times, times.sorted())
     }
 
-    func fetchTodayTides_throwsInvalidDataWhenHourlyMissing() async {
-        let json: [String: Any] = [
-            "timezone": "UTC"
-            // no hourly
+    func fetchTodayTides_throwsInvalidDataWhenSeaLevelEmpty() async {
+        let seaLevelJSON: [String: Any] = ["data": []]
+        let extremesJSON: [String: Any] = [
+            "data": [
+                ["time": "2026-04-07T01:00:00+00:00", "height": 2.5, "type": "high"]
+            ]
         ]
-        let data = try! JSONSerialization.data(withJSONObject: json)
-        URLProtocolMock.testResponses = ["marine-api.open-meteo.com": (200, data)]
+
+        URLProtocolMock.testResponses = [
+            "api.stormglass.io/v2/tide/sea-level/point": (200, try! JSONSerialization.data(withJSONObject: seaLevelJSON)),
+            "api.stormglass.io/v2/tide/extremes/point": (200, try! JSONSerialization.data(withJSONObject: extremesJSON))
+        ]
 
         do {
             _ = try await TideService.fetchTodayTides(latitude: 0, longitude: 0)
@@ -102,22 +109,17 @@ final class MareasIATests: XCTestCase {
         }
     }
 
-    func fetchTodayTides_throwsInvalidDataWhenArraysMismatch() async {
-        let json: [String: Any] = [
-            "timezone": "UTC",
-            "hourly": [
-                "time": ["2026-04-07T00:00","2026-04-07T01:00"],
-                "tide_height": [1.0]
-            ]
+    func fetchTodayTides_throwsUnauthorizedOn403() async {
+        URLProtocolMock.testResponses = [
+            "api.stormglass.io/v2/tide/sea-level/point": (403, Data()),
+            "api.stormglass.io/v2/tide/extremes/point": (403, Data())
         ]
-        let data = try! JSONSerialization.data(withJSONObject: json)
-        URLProtocolMock.testResponses = ["marine-api.open-meteo.com": (200, data)]
 
         do {
             _ = try await TideService.fetchTodayTides(latitude: 0, longitude: 0)
-            XCTFail("Expected invalidData error")
+            XCTFail("Expected unauthorized error")
         } catch let error as TideServiceError {
-            XCTAssertEqual(error, TideServiceError.invalidData)
+            XCTAssertEqual(error, TideServiceError.unauthorized)
         } catch {
             XCTFail("Unexpected error: \(error)")
         }
@@ -179,7 +181,11 @@ final class URLProtocolMock: URLProtocol {
             return
         }
 
-        if let (status, data) = URLProtocolMock.testResponses[host] {
+        let hostAndPath = host + url.path
+        let responseEntry = URLProtocolMock.testResponses[hostAndPath]
+            ?? URLProtocolMock.testResponses[host]
+
+        if let (status, data) = responseEntry {
             let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
             if let d = data { client?.urlProtocol(self, didLoad: d) }
