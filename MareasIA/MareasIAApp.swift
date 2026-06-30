@@ -11,7 +11,8 @@ import SwiftUI
 struct MareasIAApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            ContentView(viewModel: DIContainer.shared.makeTideViewModel())
         }
     }
 }
+
